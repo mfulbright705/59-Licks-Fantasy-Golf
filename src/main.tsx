@@ -105,6 +105,7 @@ function normalizeTrend(value: any): Trend {
 
 function displayScore(value: number | null) {
   if (value === null || value === undefined) return "—";
+  if (value === 0) return "E";
   return value > 0 ? `+${value}` : `${value}`;
 }
 
