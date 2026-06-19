@@ -130,7 +130,13 @@ function displayScore(value: number | null) {
   return value > 0 ? `+${value}` : `${value}`;
 }
 
+function isCurrentRoundTotal(row: TeamRoundTotalRow) {
+  const source = String(row.source ?? "").toLowerCase();
+  return source === "live" || source === "current" || source === "current-round";
+}
+
 function displayRoundTotal(row: TeamRoundTotalRow) {
+  if (isCurrentRoundTotal(row)) return displayScore(row.toPar);
   if (row.total === null || row.total === undefined) return "—";
   return `${row.total} (${displayScore(row.toPar)})`;
 }
@@ -544,7 +550,7 @@ function App() {
                       <div key={`${row.team}-${row.round}`} style={styles.roundTotalCell}>
                         <div style={styles.muted}>{row.round}</div>
                         <div style={{ ...styles.roundTotalValue, color: scoreColor(row.toPar) }}>{displayRoundTotal(row)}</div>
-                        <div style={styles.statSub}>{row.source === "live" ? "Current round" : "Completed"}</div>
+                        <div style={styles.statSub}>{isCurrentRoundTotal(row) ? "Current round" : "Completed"}</div>
                       </div>
                     ))}
                   </div>
