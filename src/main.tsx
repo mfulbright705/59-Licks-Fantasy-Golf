@@ -23,6 +23,14 @@ type TeamGolferRow = {
   source?: string;
 };
 
+type TeamRoundTotalRow = {
+  team: string;
+  round: string;
+  total: number | null;
+  toPar: number | null;
+  source?: string;
+};
+
 type FreeAgentRow = {
   id: number;
   name: string;
@@ -71,6 +79,7 @@ type LeagueSnapshot = {
   dailyStandings: StandingRow[];
   tournamentStandings: StandingRow[];
   teamDetails: Record<string, TeamGolferRow[]>;
+  teamRoundTotals: Record<string, TeamRoundTotalRow[]>;
   freeAgents: FreeAgentRow[];
   history: HistoryRow[];
   recentMoves: MoveRow[];
@@ -81,6 +90,7 @@ type LeagueSnapshot = {
 const DATA_URL =
   "https://script.google.com/macros/s/AKfycbxlf3nqcU8R-eeMjFcAZVlJm_3-OcVJ2YcIPPhZ1w2FYyoXzHSEpOrGUcEbtrqIYba_rQ/exec";
 const AUTO_REFRESH_MS = 60000;
+const DEFAULT_TEAM_ROUND_PAR = 350;
 
 const fallbackSnapshot: LeagueSnapshot = {
   currentEvent: "Players Championship",
@@ -94,6 +104,7 @@ const fallbackSnapshot: LeagueSnapshot = {
   dailyStandings: [],
   tournamentStandings: [],
   teamDetails: {},
+  teamRoundTotals: {},
   freeAgents: [],
   history: [],
   recentMoves: [],
@@ -119,11 +130,128 @@ function displayScore(value: number | null) {
   return value > 0 ? `+${value}` : `${value}`;
 }
 
+function displayRoundTotal(row: TeamRoundTotalRow) {
+  if (row.total === null || row.total === undefined) return "—";
+  return `${row.total} (${displayScore(row.toPar)})`;
+}
+
 function scoreColor(value: number | null) {
   if (value === null || value === undefined) return "#94a3b8";
   if (value < 0) return "#059669";
   if (value > 0) return "#dc2626";
   return "#475569";
+}
+
+function getRoundNumber(round: string | undefined) {
+  const match = String(round ?? "").match(/\d+/);
+  return match ? Number(match[0]) : null;
+}
+
+function addTeamRoundTotal(
+  acc: Record<string, TeamRoundTotalRow[]>,
+  row: any,
+  fallbackTeam = "",
+) {
+  const team = String(row?.team ?? row?.Team ?? fallbackTeam ?? "").trim();
+  const round = String(row?.round ?? row?.Round ?? "").trim();
+  if (!team || !round) return;
+
+  const total = nullableNumber(row?.total ?? row?.Total ?? row?.score ?? row?.Score);
+  const toPar = nullableNumber(
+    row?.toPar ?? row?.scoreToPar ?? row?.to_par ?? row?.relativeToPar ?? row?.RelativeToPar,
+  );
+
+  if (!acc[team]) acc[team] = [];
+  acc[team].push({
+    team,
+    round,
+    total,
+    toPar,
+    source: String(row?.source ?? row?.Source ?? "sheet"),
+  });
+}
+
+function normalizeTeamRoundTotals(
+  rawValue: any,
+  dailyStandings: StandingRow[],
+  tournamentStandings: StandingRow[],
+  currentRound: string,
+): Record<string, TeamRoundTotalRow[]> {
+  const parsed: Record<string, TeamRoundTotalRow[]> = {};
+
+  if (Array.isArray(rawValue)) {
+    rawValue.forEach((row) => addTeamRoundTotal(parsed, row));
+  } else if (rawValue && typeof rawValue === "object") {
+    Object.entries(rawValue).forEach(([team, rows]) => {
+      if (Array.isArray(rows)) {
+        rows.forEach((row) => addTeamRoundTotal(parsed, row, team));
+      } else if (rows && typeof rows === "object") {
+        Object.entries(rows).forEach(([round, value]) => {
+          if (value && typeof value === "object") {
+            addTeamRoundTotal(parsed, { ...(value as object), team, round }, team);
+          } else {
+            const total = nullableNumber(value);
+            addTeamRoundTotal(parsed, { team, round, total, toPar: total === null ? null : total - DEFAULT_TEAM_ROUND_PAR }, team);
+          }
+        });
+      }
+    });
+  }
+
+  const sortRows = (rows: TeamRoundTotalRow[]) =>
+    rows.sort((a, b) => (getRoundNumber(a.round) ?? 99) - (getRoundNumber(b.round) ?? 99));
+
+  Object.values(parsed).forEach(sortRows);
+  if (Object.keys(parsed).length) return parsed;
+
+  const roundNumber = getRoundNumber(currentRound) ?? 1;
+  const dailyByTeam = new Map(dailyStandings.map((row) => [row.team, row]));
+  const tournamentByTeam = new Map(tournamentStandings.map((row) => [row.team, row]));
+  const teamNames = new Set<string>([...dailyByTeam.keys(), ...tournamentByTeam.keys()]);
+  const fallback: Record<string, TeamRoundTotalRow[]> = {};
+
+  teamNames.forEach((team) => {
+    const dailyRow = dailyByTeam.get(team);
+    const tournamentRow = tournamentByTeam.get(team);
+    const today = dailyRow?.today ?? null;
+    const rows: TeamRoundTotalRow[] = [];
+
+    if (roundNumber <= 1) {
+      if (today !== null) {
+        rows.push({ team, round: "R1", total: DEFAULT_TEAM_ROUND_PAR + today, toPar: today, source: "live" });
+      }
+    } else {
+      const completedTotal =
+        tournamentRow?.total === null || tournamentRow?.total === undefined
+          ? null
+          : tournamentRow.total - (today ?? 0);
+
+      if (completedTotal !== null) {
+        const completedRounds = roundNumber === 2 ? 1 : roundNumber - 1;
+        rows.push({
+          team,
+          round: roundNumber === 2 ? "R1" : `R1-R${completedRounds}`,
+          total: completedTotal,
+          toPar: completedTotal - DEFAULT_TEAM_ROUND_PAR * completedRounds,
+          source: "standings",
+        });
+      }
+
+      if (today !== null) {
+        rows.push({
+          team,
+          round: currentRound || `R${roundNumber}`,
+          total: DEFAULT_TEAM_ROUND_PAR + today,
+          toPar: today,
+          source: "live",
+        });
+      }
+    }
+
+    fallback[team] = sortRows(rows);
+  });
+
+  return fallback;
 }
 
 function transformSnapshot(raw: any): LeagueSnapshot {
@@ -196,18 +324,24 @@ function transformSnapshot(raw: any): LeagueSnapshot {
       }))
     : [];
 
+  const currentRound = String(raw?.currentRound ?? fallbackSnapshot.currentRound ?? "R1");
+  const dailyStandings = parseStandings(raw?.dailyStandings);
+  const tournamentStandings = parseStandings(raw?.tournamentStandings);
+  const teamRoundTotals = normalizeTeamRoundTotals(raw?.teamRoundTotals, dailyStandings, tournamentStandings, currentRound);
+
   return {
     currentEvent: String(raw?.currentEvent ?? fallbackSnapshot.currentEvent),
     lastUpdated: String(raw?.lastUpdated ?? fallbackSnapshot.lastUpdated),
-    currentRound: String(raw?.currentRound ?? fallbackSnapshot.currentRound ?? "R1"),
+    currentRound,
     liveStatus: String(raw?.liveStatus ?? fallbackSnapshot.liveStatus ?? "Pre-round"),
     leader: String(raw?.leader ?? fallbackSnapshot.leader ?? ""),
     teamCount: nullableNumber(raw?.teamCount) ?? 0,
     freeAgentCount: nullableNumber(raw?.freeAgentCount) ?? 0,
     historyCount: nullableNumber(raw?.historyCount) ?? 0,
-    dailyStandings: parseStandings(raw?.dailyStandings),
-    tournamentStandings: parseStandings(raw?.tournamentStandings),
+    dailyStandings,
+    tournamentStandings,
     teamDetails,
+    teamRoundTotals,
     freeAgents,
     history,
     recentMoves,
@@ -270,6 +404,7 @@ function App() {
   }, [search, snapshot.freeAgents]);
 
   const selectedTeamRows = snapshot.teamDetails[selectedTeam] ?? [];
+  const selectedTeamRoundTotals = snapshot.teamRoundTotals[selectedTeam] ?? [];
   const countingRows = selectedTeamRows.filter((r) => r.counting).sort((a, b) => (a.currentRoundScore ?? 999) - (b.currentRoundScore ?? 999));
   const excludedRows = selectedTeamRows.filter((r) => !r.counting).sort((a, b) => (a.currentRoundScore ?? 999) - (b.currentRoundScore ?? 999));
 
@@ -399,6 +534,21 @@ function App() {
                 <StatCard title="Currently Counting" value={countingRows.length} />
                 <StatCard title="Excluded" value={excludedRows.length} />
                 <StatCard title="Round" value={snapshot.currentRound || "R1"} />
+              </div>
+
+              <div style={styles.card}>
+                <h2 style={styles.sectionTitle}>{selectedTeam} — Round Totals</h2>
+                {selectedTeamRoundTotals.length === 0 ? <div style={styles.muted}>No round totals yet.</div> : (
+                  <div style={styles.roundTotalsGrid}>
+                    {selectedTeamRoundTotals.map((row) => (
+                      <div key={`${row.team}-${row.round}`} style={styles.roundTotalCell}>
+                        <div style={styles.muted}>{row.round}</div>
+                        <div style={{ ...styles.roundTotalValue, color: scoreColor(row.toPar) }}>{displayRoundTotal(row)}</div>
+                        <div style={styles.statSub}>{row.source === "live" ? "Current round" : "Completed"}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div style={styles.card}>
@@ -591,6 +741,9 @@ const styles: Record<string, React.CSSProperties> = {
   stack: { display: "grid", gap: 12 },
   listCard: { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 16, padding: 14 },
   countCard: { background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 16, padding: 14 },
+  roundTotalsGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 },
+  roundTotalCell: { background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 14, padding: 14 },
+  roundTotalValue: { fontSize: 22, fontWeight: 800, marginTop: 4 },
   rowBetween: { display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" },
   teamName: { fontSize: 18, fontWeight: 700 },
   muted: { color: "#64748b", fontSize: 12 },
