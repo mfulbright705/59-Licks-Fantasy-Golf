@@ -102,6 +102,90 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      (() => {
+        const DATA_URL = "https://script.google.com/macros/s/AKfycbxlf3nqcU8R-eeMjFcAZVlJm_3-OcVJ2YcIPPhZ1w2FYyoXzHSEpOrGUcEbtrqIYba_rQ/exec";
+        const isPreRound = (value) => String(value ?? "").trim().toLowerCase() === "pre-round";
+        const blank = (value) => value === null || value === undefined || value === "";
+        const preRoundZeroTeams = new Set();
+
+        const teamName = (row, fallback = "") => String(row?.team ?? row?.Team ?? fallback ?? "").trim();
+        const shouldClearScore = (row) => isPreRound(row?.thru ?? row?.Thru) && Number(row?.today ?? row?.Today ?? row?.DailyScore) === 0;
+
+        const cleanStanding = (row) => {
+          if (!row || typeof row !== "object" || !shouldClearScore(row)) return row;
+          const team = teamName(row);
+          if (team) preRoundZeroTeams.add(team);
+          const copy = { ...row };
+          if ("today" in copy) copy.today = null;
+          if ("Today" in copy) copy.Today = null;
+          if ("dailyScore" in copy) copy.dailyScore = null;
+          if ("DailyScore" in copy) copy.DailyScore = "";
+          return copy;
+        };
+
+        const cleanStandings = (rows) => Array.isArray(rows) ? rows.map(cleanStanding) : rows;
+
+        const cleanTeamDetail = (row) => {
+          if (!row || typeof row !== "object") return row;
+          const source = String(row.source ?? row.Source ?? "").trim().toLowerCase();
+          const golfer = String(row.golfer ?? row.Golfer ?? "").trim().toLowerCase();
+          const score = row.currentRoundScore ?? row.CurrentRoundScore ?? row.roundScore ?? row.RoundScore;
+          const isBlankComputedPenalty = (source === "computed" || golfer.includes("worst score penalty")) && blank(score);
+          if (!isBlankComputedPenalty) return row;
+          const copy = { ...row };
+          if ("counting" in copy) copy.counting = false;
+          if ("Counting" in copy) copy.Counting = "No";
+          if ("counts" in copy) copy.counts = false;
+          if ("Counts" in copy) copy.Counts = "No";
+          return copy;
+        };
+
+        const cleanRoundTotals = (value, fallbackTeam = "") => {
+          if (Array.isArray(value)) {
+            return value.filter((row) => {
+              if (!row || typeof row !== "object") return true;
+              const team = teamName(row, fallbackTeam);
+              const source = String(row.source ?? row.Source ?? "").trim().toLowerCase();
+              const toPar = row.toPar ?? row.scoreToPar ?? row.to_par ?? row.relativeToPar ?? row.RelativeToPar;
+              const isLive = source === "live" || source === "current" || source === "current-round";
+              return !(preRoundZeroTeams.has(team) && isLive && Number(toPar) === 0);
+            });
+          }
+
+          if (value && typeof value === "object") {
+            return Object.fromEntries(Object.entries(value).map(([team, rows]) => [team, cleanRoundTotals(rows, team)]));
+          }
+
+          return value;
+        };
+
+        const originalFetch = window.fetch.bind(window);
+        window.fetch = async (...args) => {
+          const response = await originalFetch(...args);
+          const requestUrl = String(args[0]?.url ?? args[0] ?? "");
+          if (!requestUrl.includes(DATA_URL)) return response;
+
+          try {
+            const data = await response.clone().json();
+            data.dailyStandings = cleanStandings(data.dailyStandings);
+            data.tournamentStandings = cleanStandings(data.tournamentStandings);
+            data.teamDetails = Array.isArray(data.teamDetails) ? data.teamDetails.map(cleanTeamDetail) : data.teamDetails;
+            data.teamRoundTotals = cleanRoundTotals(data.teamRoundTotals);
+
+            const headers = new Headers(response.headers);
+            headers.set("content-type", "application/json");
+            return new Response(JSON.stringify(data), {
+              status: response.status,
+              statusText: response.statusText,
+              headers,
+            });
+          } catch (error) {
+            return response;
+          }
+        };
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
