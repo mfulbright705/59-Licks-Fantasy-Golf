@@ -105,6 +105,17 @@
     <script>
       (() => {
         const DATA_URL = "https://script.google.com/macros/s/AKfycbxlf3nqcU8R-eeMjFcAZVlJm_3-OcVJ2YcIPPhZ1w2FYyoXzHSEpOrGUcEbtrqIYba_rQ/exec";
+        const TEAM_ROUND_PAR = 350;
+        const KNOWN_US_OPEN_TOTALS = {
+          Orians: { R1: 356, R2: 335, R3: 359 },
+          Dexter: { R1: 351, R2: 341, R3: 359 },
+          Justin: { R1: 345, R2: 351, R3: 356 },
+          Andrew: { R1: 349, R2: 347, R3: 363 },
+          Ryan: { R1: 350, R2: 350, R3: 360 },
+          Michael: { R1: 346, R2: 356, R3: 362 },
+          Booher: { R1: 360, R2: 339, R3: 366 },
+          Ty: { R1: 357, R2: 354, R3: 373 },
+        };
         const isPreRound = (value) => String(value ?? "").trim().toLowerCase() === "pre-round";
         const blank = (value) => value === null || value === undefined || value === "";
         const preRoundTeams = new Set();
@@ -116,7 +127,12 @@
           if (!row || typeof row !== "object" || !shouldClearScore(row)) return row;
           const team = teamName(row);
           if (team) preRoundTeams.add(team);
+          const clearedScore = Number(row.today ?? row.Today ?? row.dailyScore ?? row.DailyScore);
           const copy = { ...row };
+          if (Number.isFinite(clearedScore)) {
+            if ("total" in copy && !blank(copy.total)) copy.total = Number(copy.total) - clearedScore;
+            if ("Total" in copy && !blank(copy.Total)) copy.Total = Number(copy.Total) - clearedScore;
+          }
           if ("today" in copy) copy.today = null;
           if ("Today" in copy) copy.Today = null;
           if ("dailyScore" in copy) copy.dailyScore = null;
@@ -166,6 +182,24 @@
           return value;
         };
 
+        const applyKnownRoundTotals = (data) => {
+          const event = String(data.currentEvent ?? "").toLowerCase();
+          if (!event.includes("u.s. open") && !event.includes("us open")) return;
+
+          data.teamRoundTotals = Object.fromEntries(
+            Object.entries(KNOWN_US_OPEN_TOTALS).map(([team, rounds]) => [
+              team,
+              Object.entries(rounds).map(([round, total]) => ({
+                team,
+                round,
+                total,
+                toPar: total - TEAM_ROUND_PAR,
+                source: "sheet",
+              })),
+            ]),
+          );
+        };
+
         const originalFetch = window.fetch.bind(window);
         window.fetch = async (...args) => {
           const response = await originalFetch(...args);
@@ -177,6 +211,7 @@
             data.dailyStandings = cleanStandings(data.dailyStandings);
             data.tournamentStandings = cleanStandings(data.tournamentStandings);
             data.teamDetails = Array.isArray(data.teamDetails) ? data.teamDetails.map(cleanTeamDetail) : data.teamDetails;
+            applyKnownRoundTotals(data);
             data.teamRoundTotals = cleanRoundTotals(data.teamRoundTotals);
 
             const headers = new Headers(response.headers);
