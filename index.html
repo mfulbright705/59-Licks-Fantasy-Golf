@@ -107,20 +107,22 @@
         const DATA_URL = "https://script.google.com/macros/s/AKfycbxlf3nqcU8R-eeMjFcAZVlJm_3-OcVJ2YcIPPhZ1w2FYyoXzHSEpOrGUcEbtrqIYba_rQ/exec";
         const isPreRound = (value) => String(value ?? "").trim().toLowerCase() === "pre-round";
         const blank = (value) => value === null || value === undefined || value === "";
-        const preRoundZeroTeams = new Set();
+        const preRoundTeams = new Set();
 
         const teamName = (row, fallback = "") => String(row?.team ?? row?.Team ?? fallback ?? "").trim();
-        const shouldClearScore = (row) => isPreRound(row?.thru ?? row?.Thru) && Number(row?.today ?? row?.Today ?? row?.DailyScore) === 0;
+        const shouldClearScore = (row) => isPreRound(row?.thru ?? row?.Thru);
 
         const cleanStanding = (row) => {
           if (!row || typeof row !== "object" || !shouldClearScore(row)) return row;
           const team = teamName(row);
-          if (team) preRoundZeroTeams.add(team);
+          if (team) preRoundTeams.add(team);
           const copy = { ...row };
           if ("today" in copy) copy.today = null;
           if ("Today" in copy) copy.Today = null;
           if ("dailyScore" in copy) copy.dailyScore = null;
           if ("DailyScore" in copy) copy.DailyScore = "";
+          if ("gap" in copy && Number(copy.gap) === 0) copy.gap = null;
+          if ("Gap" in copy && Number(copy.Gap) === 0) copy.Gap = "";
           return copy;
         };
 
@@ -131,13 +133,18 @@
           const source = String(row.source ?? row.Source ?? "").trim().toLowerCase();
           const golfer = String(row.golfer ?? row.Golfer ?? "").trim().toLowerCase();
           const score = row.currentRoundScore ?? row.CurrentRoundScore ?? row.roundScore ?? row.RoundScore;
-          const isBlankComputedPenalty = (source === "computed" || golfer.includes("worst score penalty")) && blank(score);
-          if (!isBlankComputedPenalty) return row;
+          const isComputedPenalty = source === "computed" || golfer.includes("worst score penalty");
+          const shouldClearPenalty = isComputedPenalty && (blank(score) || preRoundTeams.has(teamName(row)));
+          if (!shouldClearPenalty) return row;
           const copy = { ...row };
           if ("counting" in copy) copy.counting = false;
           if ("Counting" in copy) copy.Counting = "No";
           if ("counts" in copy) copy.counts = false;
           if ("Counts" in copy) copy.Counts = "No";
+          if ("today" in copy) copy.today = null;
+          if ("Today" in copy) copy.Today = null;
+          if ("currentRoundScore" in copy) copy.currentRoundScore = null;
+          if ("CurrentRoundScore" in copy) copy.CurrentRoundScore = "";
           return copy;
         };
 
@@ -147,9 +154,8 @@
               if (!row || typeof row !== "object") return true;
               const team = teamName(row, fallbackTeam);
               const source = String(row.source ?? row.Source ?? "").trim().toLowerCase();
-              const toPar = row.toPar ?? row.scoreToPar ?? row.to_par ?? row.relativeToPar ?? row.RelativeToPar;
               const isLive = source === "live" || source === "current" || source === "current-round";
-              return !(preRoundZeroTeams.has(team) && isLive && Number(toPar) === 0);
+              return !(preRoundTeams.has(team) && isLive);
             });
           }
 
