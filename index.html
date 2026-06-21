@@ -137,8 +137,8 @@
           if ("Today" in copy) copy.Today = null;
           if ("dailyScore" in copy) copy.dailyScore = null;
           if ("DailyScore" in copy) copy.DailyScore = "";
-          if ("gap" in copy && Number(copy.gap) === 0) copy.gap = null;
-          if ("Gap" in copy && Number(copy.Gap) === 0) copy.Gap = "";
+          if ("gap" in copy) copy.gap = null;
+          if ("Gap" in copy) copy.Gap = "";
           return copy;
         };
 
@@ -150,7 +150,8 @@
           const golfer = String(row.golfer ?? row.Golfer ?? "").trim().toLowerCase();
           const score = row.currentRoundScore ?? row.CurrentRoundScore ?? row.roundScore ?? row.RoundScore;
           const isComputedPenalty = source === "computed" || golfer.includes("worst score penalty");
-          const shouldClearPenalty = isComputedPenalty && (blank(score) || preRoundTeams.has(teamName(row)));
+          if (isComputedPenalty && preRoundTeams.has(teamName(row))) return null;
+          const shouldClearPenalty = isComputedPenalty && blank(score);
           if (!shouldClearPenalty) return row;
           const copy = { ...row };
           if ("counting" in copy) copy.counting = false;
@@ -210,7 +211,7 @@
             const data = await response.clone().json();
             data.dailyStandings = cleanStandings(data.dailyStandings);
             data.tournamentStandings = cleanStandings(data.tournamentStandings);
-            data.teamDetails = Array.isArray(data.teamDetails) ? data.teamDetails.map(cleanTeamDetail) : data.teamDetails;
+            data.teamDetails = Array.isArray(data.teamDetails) ? data.teamDetails.map(cleanTeamDetail).filter(Boolean) : data.teamDetails;
             applyKnownRoundTotals(data);
             data.teamRoundTotals = cleanRoundTotals(data.teamRoundTotals);
 
