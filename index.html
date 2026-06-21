@@ -119,9 +119,31 @@
         const isPreRound = (value) => String(value ?? "").trim().toLowerCase() === "pre-round";
         const blank = (value) => value === null || value === undefined || value === "";
         const preRoundTeams = new Set();
+        const penaltyAdjustments = new Map();
 
         const teamName = (row, fallback = "") => String(row?.team ?? row?.Team ?? fallback ?? "").trim();
         const shouldClearScore = (row) => isPreRound(row?.thru ?? row?.Thru);
+        const scoreValue = (row) => {
+          const score = Number(row?.currentRoundScore ?? row?.CurrentRoundScore ?? row?.roundScore ?? row?.RoundScore ?? row?.today ?? row?.Today);
+          return Number.isFinite(score) ? score : 0;
+        };
+        const isCounting = (row) => {
+          const value = row?.counting ?? row?.Counting ?? row?.counts ?? row?.Counts;
+          return value === true || String(value ?? "").trim().toLowerCase() === "yes" || String(value ?? "").trim().toLowerCase() === "true";
+        };
+        const isPenaltyRow = (row) => {
+          const source = String(row?.source ?? row?.Source ?? "").trim().toLowerCase();
+          const golfer = String(row?.golfer ?? row?.Golfer ?? "").trim().toLowerCase();
+          return source === "computed" || golfer.includes("worst score penalty");
+        };
+        const isCutStatus = (value) => {
+          const status = String(value ?? "").trim().toLowerCase();
+          return status === "cut" || status === "mc" || status === "wd" || status === "dq" || status === "withdrawn";
+        };
+        const addPenaltyAdjustment = (team, score) => {
+          if (!team || !Number.isFinite(score) || score === 0) return;
+          penaltyAdjustments.set(team, (penaltyAdjustments.get(team) ?? 0) + score);
+        };
 
         const cleanStanding = (row) => {
           if (!row || typeof row !== "object" || !shouldClearScore(row)) return row;
@@ -146,12 +168,9 @@
 
         const cleanTeamDetail = (row) => {
           if (!row || typeof row !== "object") return row;
-          const source = String(row.source ?? row.Source ?? "").trim().toLowerCase();
-          const golfer = String(row.golfer ?? row.Golfer ?? "").trim().toLowerCase();
           const score = row.currentRoundScore ?? row.CurrentRoundScore ?? row.roundScore ?? row.RoundScore;
-          const isComputedPenalty = source === "computed" || golfer.includes("worst score penalty");
-          if (isComputedPenalty && preRoundTeams.has(teamName(row))) return null;
-          const shouldClearPenalty = isComputedPenalty && blank(score);
+          if (isPenaltyRow(row) && preRoundTeams.has(teamName(row))) return null;
+          const shouldClearPenalty = isPenaltyRow(row) && blank(score);
           if (!shouldClearPenalty) return row;
           const copy = { ...row };
           if ("counting" in copy) copy.counting = false;
@@ -164,6 +183,57 @@
           if ("CurrentRoundScore" in copy) copy.CurrentRoundScore = "";
           return copy;
         };
+
+        const cleanTeamDetails = (rows) => {
+          if (!Array.isArray(rows)) return rows;
+          const grouped = new Map();
+          rows.forEach((row, index) => {
+            const team = teamName(row);
+            if (!team) return;
+            if (!grouped.has(team)) grouped.set(team, []);
+            grouped.get(team).push({ row, index });
+          });
+
+          const keepPenaltyIndexes = new Set();
+          grouped.forEach((items, team) => {
+            const eligibleCount = items.filter(({ row }) => !isPenaltyRow(row) && !isCutStatus(row?.thru ?? row?.Thru)).length;
+            const expectedPenaltyCount = preRoundTeams.has(team) ? 0 : Math.max(0, 5 - eligibleCount);
+            const penaltyItems = items.filter(({ row }) => isPenaltyRow(row));
+
+            penaltyItems.forEach((item, penaltyIndex) => {
+              if (penaltyIndex < expectedPenaltyCount) {
+                keepPenaltyIndexes.add(item.index);
+                return;
+              }
+
+              if (!preRoundTeams.has(team) && isCounting(item.row)) {
+                addPenaltyAdjustment(team, scoreValue(item.row));
+              }
+            });
+          });
+
+          return rows.map((row, index) => {
+            if (isPenaltyRow(row) && !keepPenaltyIndexes.has(index)) return null;
+            return cleanTeamDetail(row);
+          }).filter(Boolean);
+        };
+
+        const adjustStandingForPenalties = (row) => {
+          if (!row || typeof row !== "object") return row;
+          const team = teamName(row);
+          const adjustment = penaltyAdjustments.get(team) ?? 0;
+          if (!adjustment || preRoundTeams.has(team)) return row;
+          const copy = { ...row };
+          if ("today" in copy && !blank(copy.today)) copy.today = Number(copy.today) - adjustment;
+          if ("Today" in copy && !blank(copy.Today)) copy.Today = Number(copy.Today) - adjustment;
+          if ("total" in copy && !blank(copy.total)) copy.total = Number(copy.total) - adjustment;
+          if ("Total" in copy && !blank(copy.Total)) copy.Total = Number(copy.Total) - adjustment;
+          if ("gap" in copy && !blank(copy.gap)) copy.gap = Number(copy.gap) - adjustment;
+          if ("Gap" in copy && !blank(copy.Gap)) copy.Gap = Number(copy.Gap) - adjustment;
+          return copy;
+        };
+
+        const adjustStandingsForPenalties = (rows) => Array.isArray(rows) ? rows.map(adjustStandingForPenalties) : rows;
 
         const cleanRoundTotals = (value, fallbackTeam = "") => {
           if (Array.isArray(value)) {
@@ -209,9 +279,13 @@
 
           try {
             const data = await response.clone().json();
+            preRoundTeams.clear();
+            penaltyAdjustments.clear();
             data.dailyStandings = cleanStandings(data.dailyStandings);
             data.tournamentStandings = cleanStandings(data.tournamentStandings);
-            data.teamDetails = Array.isArray(data.teamDetails) ? data.teamDetails.map(cleanTeamDetail).filter(Boolean) : data.teamDetails;
+            data.teamDetails = cleanTeamDetails(data.teamDetails);
+            data.dailyStandings = adjustStandingsForPenalties(data.dailyStandings);
+            data.tournamentStandings = adjustStandingsForPenalties(data.tournamentStandings);
             applyKnownRoundTotals(data);
             data.teamRoundTotals = cleanRoundTotals(data.teamRoundTotals);
 
