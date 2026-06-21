@@ -127,6 +127,22 @@
             "Woodland, Gary": 3,
           },
         };
+        const KNOWN_US_OPEN_CURRENT_ROUND_OVERRIDES = [
+          {
+            team: "Booher",
+            names: ["Niemann, Joaquin", "Joaquin Niemann"],
+            today: -4,
+            currentRoundScore: -4,
+            thru: "F",
+          },
+          {
+            team: "Ty",
+            names: ["Koivun, Jackson", "Jackson Koivun", "Jackson Koivun (a)"],
+            today: -2,
+            currentRoundScore: -2,
+            thru: "F",
+          },
+        ];
 
         const blank = (value) => value === null || value === undefined || value === "";
         const isPreRound = (value) => String(value ?? "").trim().toLowerCase() === "pre-round";
@@ -151,6 +167,14 @@
           if ("Today" in row) row.Today = score;
           if ("dailyScore" in row) row.dailyScore = score;
           if ("DailyScore" in row) row.DailyScore = score;
+        };
+        const setThruValue = (row, thru) => {
+          row.thru = thru;
+          if ("Thru" in row) row.Thru = thru;
+        };
+        const setSourceValue = (row, source) => {
+          row.source = source;
+          if ("Source" in row) row.Source = source;
         };
         const setCountingValue = (row, counting) => {
           row.counting = counting;
@@ -182,6 +206,13 @@
           .replace(/\([^)]*\)/g, "")
           .replace(/[^\p{L}\p{N}]/gu, "")
           .toLowerCase();
+        const getKnownCurrentRoundOverride = (team, golfer) => {
+          const normalizedGolfer = normalizeName(golfer);
+          return KNOWN_US_OPEN_CURRENT_ROUND_OVERRIDES.find((override) => {
+            if (team && override.team && team !== override.team) return false;
+            return override.names.some((name) => normalizeName(name) === normalizedGolfer);
+          }) ?? null;
+        };
 
         const preRoundTeams = new Set();
         const penaltyAdjustments = new Map();
@@ -258,6 +289,39 @@
             if ("CurrentRoundScore" in copy) copy.CurrentRoundScore = "";
             return copy;
           }).filter(Boolean);
+        };
+
+        const applyKnownCurrentRoundOverrides = (data) => {
+          if (
+            !isKnownUsOpen(data) ||
+            String(data.currentRound ?? "").trim().toUpperCase() !== "R4" ||
+            !Array.isArray(data.teamDetails)
+          ) return;
+
+          data.teamDetails = data.teamDetails.map((row) => {
+            if (!row || typeof row !== "object" || isPenaltyRow(row)) return row;
+            const override = getKnownCurrentRoundOverride(teamName(row), row?.golfer ?? row?.Golfer);
+            if (!override) return row;
+            const copy = { ...row };
+            setTodayValue(copy, override.today);
+            setScoreValue(copy, override.currentRoundScore);
+            setThruValue(copy, override.thru);
+            setSourceValue(copy, "live");
+            return copy;
+          });
+
+          if (Array.isArray(data.topGolfers)) {
+            data.topGolfers = data.topGolfers.map((row) => {
+              const override = getKnownCurrentRoundOverride("", row?.player ?? row?.Player);
+              if (!override) return row;
+              return { ...row, today: override.today, thru: override.thru, owner: override.team };
+            });
+          }
+
+          if (Array.isArray(data.freeAgents)) {
+            data.freeAgents = data.freeAgents.filter((row) => !getKnownCurrentRoundOverride("", row?.name ?? row?.Name));
+            data.freeAgentCount = data.freeAgents.length;
+          }
         };
 
         const recountTeamDetails = (rows) => {
@@ -458,6 +522,7 @@
             data.dailyStandings = cleanStandings(data.dailyStandings);
             data.tournamentStandings = cleanStandings(data.tournamentStandings);
             data.teamDetails = cleanTeamDetails(data.teamDetails);
+            applyKnownCurrentRoundOverrides(data);
             data.teamDetails = recountTeamDetails(data.teamDetails);
             data.dailyStandings = adjustStandingsForPenalties(data.dailyStandings);
             data.tournamentStandings = adjustStandingsForPenalties(data.tournamentStandings);
