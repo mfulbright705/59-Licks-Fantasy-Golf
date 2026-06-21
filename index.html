@@ -140,10 +140,23 @@
           return Number.isFinite(score) ? score : 0;
         };
         const setScoreValue = (row, score) => {
+          row.currentRoundScore = score;
           if ("currentRoundScore" in row) row.currentRoundScore = score;
           if ("CurrentRoundScore" in row) row.CurrentRoundScore = score;
           if ("roundScore" in row) row.roundScore = score;
           if ("RoundScore" in row) row.RoundScore = score;
+        };
+        const setTodayValue = (row, score) => {
+          row.today = score;
+          if ("Today" in row) row.Today = score;
+          if ("dailyScore" in row) row.dailyScore = score;
+          if ("DailyScore" in row) row.DailyScore = score;
+        };
+        const setCountingValue = (row, counting) => {
+          row.counting = counting;
+          if ("Counting" in row) row.Counting = counting ? "Yes" : "No";
+          if ("counts" in row) row.counts = counting;
+          if ("Counts" in row) row.Counts = counting ? "Yes" : "No";
         };
         const isCounting = (row) => {
           const value = row?.counting ?? row?.Counting ?? row?.counts ?? row?.Counts;
@@ -245,6 +258,92 @@
             if ("CurrentRoundScore" in copy) copy.CurrentRoundScore = "";
             return copy;
           }).filter(Boolean);
+        };
+
+        const recountTeamDetails = (rows) => {
+          if (!Array.isArray(rows)) return rows;
+          const grouped = new Map();
+          rows.forEach((row, index) => {
+            const team = teamName(row);
+            if (!team) return;
+            if (!grouped.has(team)) grouped.set(team, []);
+            grouped.get(team).push({ row, index });
+          });
+
+          const countedIndexes = new Set();
+          const scoreByIndex = new Map();
+          grouped.forEach((items, team) => {
+            if (preRoundTeams.has(team)) return;
+            const candidates = items
+              .filter(({ row }) => isPenaltyRow(row) || !isCutStatus(row?.thru ?? row?.Thru))
+              .map(({ row, index }) => {
+                const score = isPenaltyRow(row) ? scoreValue(row) : currentRoundScoreValue(row);
+                return { index, score: Number.isFinite(score) ? score : 0 };
+              })
+              .sort((a, b) => a.score - b.score || a.index - b.index);
+            candidates.slice(0, 5).forEach(({ index, score }) => {
+              countedIndexes.add(index);
+              scoreByIndex.set(index, score);
+            });
+          });
+
+          return rows.map((row, index) => {
+            if (!row || typeof row !== "object") return row;
+            const copy = { ...row };
+            const counting = countedIndexes.has(index);
+            setCountingValue(copy, counting);
+            if (counting && scoreByIndex.has(index)) {
+              const score = scoreByIndex.get(index);
+              if (blank(copy.currentRoundScore ?? copy.CurrentRoundScore ?? copy.roundScore ?? copy.RoundScore)) {
+                setScoreValue(copy, score);
+              }
+              if (blank(copy.today ?? copy.Today ?? copy.dailyScore ?? copy.DailyScore)) {
+                setTodayValue(copy, score);
+              }
+            }
+            return copy;
+          });
+        };
+
+        const applyKnownDailyScores = (data) => {
+          if (!isKnownUsOpen(data) || !Array.isArray(data.teamDetails)) return;
+          const scores = new Map();
+          data.teamDetails.forEach((row) => {
+            if (!isCounting(row)) return;
+            const team = teamName(row);
+            if (!team) return;
+            scores.set(team, (scores.get(team) ?? 0) + currentRoundScoreValue(row));
+          });
+
+          const updateRows = (rows, shouldSort) => {
+            if (!Array.isArray(rows)) return rows;
+            let updated = rows.map((row) => {
+              const team = teamName(row);
+              if (!scores.has(team)) return row;
+              const copy = { ...row };
+              setTodayValue(copy, scores.get(team));
+              return copy;
+            });
+            if (shouldSort) {
+              updated = updated.sort((a, b) => Number(a.today ?? a.Today ?? 999999) - Number(b.today ?? b.Today ?? 999999));
+              const leaderScore = Number(updated[0]?.today ?? updated[0]?.Today ?? 0);
+              updated = updated.map((row, index) => {
+                const score = Number(row.today ?? row.Today);
+                const copy = { ...row };
+                if ("rank" in copy) copy.rank = index + 1;
+                if ("Rank" in copy) copy.Rank = index + 1;
+                if (Number.isFinite(score)) {
+                  if ("gap" in copy) copy.gap = score - leaderScore;
+                  if ("Gap" in copy) copy.Gap = score - leaderScore;
+                }
+                return copy;
+              });
+            }
+            return updated;
+          };
+
+          data.dailyStandings = updateRows(data.dailyStandings, true);
+          data.tournamentStandings = updateRows(data.tournamentStandings, false);
         };
 
         const adjustStandingForPenalties = (row) => {
@@ -359,9 +458,11 @@
             data.dailyStandings = cleanStandings(data.dailyStandings);
             data.tournamentStandings = cleanStandings(data.tournamentStandings);
             data.teamDetails = cleanTeamDetails(data.teamDetails);
+            data.teamDetails = recountTeamDetails(data.teamDetails);
             data.dailyStandings = adjustStandingsForPenalties(data.dailyStandings);
             data.tournamentStandings = adjustStandingsForPenalties(data.tournamentStandings);
             applyKnownRoundTotals(data);
+            applyKnownDailyScores(data);
             applyKnownTournamentStandings(data);
             data.teamRoundTotals = cleanRoundTotals(data.teamRoundTotals);
             const headers = new Headers(response.headers);
