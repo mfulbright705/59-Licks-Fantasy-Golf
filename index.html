@@ -106,6 +106,7 @@
       (() => {
         const DATA_URL = "https://script.google.com/macros/s/AKfycbxlf3nqcU8R-eeMjFcAZVlJm_3-OcVJ2YcIPPhZ1w2FYyoXzHSEpOrGUcEbtrqIYba_rQ/exec";
         const TEAM_ROUND_PAR = 350;
+        const POST_CUT_PENALTY_TO_PAR = 12;
         const KNOWN_US_OPEN_TOTALS = {
           Orians: { R1: 356, R2: 335, R3: 359 },
           Dexter: { R1: 351, R2: 341, R3: 359 },
@@ -114,7 +115,7 @@
           Ryan: { R1: 350, R2: 350, R3: 360 },
           Michael: { R1: 346, R2: 356, R3: 362 },
           Booher: { R1: 360, R2: 339, R3: 366 },
-          Ty: { R1: 357, R2: 354, R3: 373 },
+          Ty: { R1: 357, R2: 354, R3: 375 },
         };
         const isPreRound = (value) => String(value ?? "").trim().toLowerCase() === "pre-round";
         const blank = (value) => value === null || value === undefined || value === "";
@@ -126,6 +127,12 @@
         const scoreValue = (row) => {
           const score = Number(row?.currentRoundScore ?? row?.CurrentRoundScore ?? row?.roundScore ?? row?.RoundScore ?? row?.today ?? row?.Today);
           return Number.isFinite(score) ? score : 0;
+        };
+        const setScoreValue = (row, score) => {
+          if ("currentRoundScore" in row) row.currentRoundScore = score;
+          if ("CurrentRoundScore" in row) row.CurrentRoundScore = score;
+          if ("roundScore" in row) row.roundScore = score;
+          if ("RoundScore" in row) row.RoundScore = score;
         };
         const isCounting = (row) => {
           const value = row?.counting ?? row?.Counting ?? row?.counts ?? row?.Counts;
@@ -143,6 +150,12 @@
         const addPenaltyAdjustment = (team, score) => {
           if (!team || !Number.isFinite(score) || score === 0) return;
           penaltyAdjustments.set(team, (penaltyAdjustments.get(team) ?? 0) + score);
+        };
+        const normalizeKeptPenalty = (team, row) => {
+          const currentScore = scoreValue(row);
+          if (currentScore >= POST_CUT_PENALTY_TO_PAR) return;
+          addPenaltyAdjustment(team, currentScore - POST_CUT_PENALTY_TO_PAR);
+          setScoreValue(row, POST_CUT_PENALTY_TO_PAR);
         };
 
         const cleanStanding = (row) => {
@@ -202,6 +215,7 @@
 
             penaltyItems.forEach((item, penaltyIndex) => {
               if (penaltyIndex < expectedPenaltyCount) {
+                normalizeKeptPenalty(team, item.row);
                 keepPenaltyIndexes.add(item.index);
                 return;
               }
@@ -253,9 +267,13 @@
           return value;
         };
 
-        const applyKnownRoundTotals = (data) => {
+        const isKnownUsOpen = (data) => {
           const event = String(data.currentEvent ?? "").toLowerCase();
-          if (!event.includes("u.s. open") && !event.includes("us open")) return;
+          return event.includes("u.s. open") || event.includes("us open");
+        };
+
+        const applyKnownRoundTotals = (data) => {
+          if (!isKnownUsOpen(data)) return;
 
           data.teamRoundTotals = Object.fromEntries(
             Object.entries(KNOWN_US_OPEN_TOTALS).map(([team, rounds]) => [
@@ -269,6 +287,39 @@
               })),
             ]),
           );
+        };
+
+        const applyKnownTournamentStandings = (data) => {
+          if (!isKnownUsOpen(data) || !Array.isArray(data.tournamentStandings)) return;
+
+          data.tournamentStandings = data.tournamentStandings
+            .map((row) => {
+              const team = teamName(row);
+              const rounds = KNOWN_US_OPEN_TOTALS[team];
+              if (!rounds) return row;
+              const completedTotal = Object.values(rounds).reduce((sum, value) => sum + Number(value || 0), 0);
+              const today = Number(row.today ?? row.Today);
+              const copy = { ...row };
+              const total = completedTotal + (Number.isFinite(today) ? today : 0);
+              if ("total" in copy) copy.total = total;
+              if ("Total" in copy) copy.Total = total;
+              return copy;
+            })
+            .sort((a, b) => Number(a.total ?? a.Total ?? 999999) - Number(b.total ?? b.Total ?? 999999));
+
+          const leaderTotal = Number(data.tournamentStandings[0]?.total ?? data.tournamentStandings[0]?.Total ?? 0);
+          data.tournamentStandings = data.tournamentStandings.map((row, index) => {
+            const team = teamName(row);
+            const total = Number(row.total ?? row.Total);
+            const copy = { ...row };
+            if ("rank" in copy) copy.rank = index + 1;
+            if ("Rank" in copy) copy.Rank = index + 1;
+            if (!preRoundTeams.has(team) && Number.isFinite(total)) {
+              if ("gap" in copy) copy.gap = total - leaderTotal;
+              if ("Gap" in copy) copy.Gap = total - leaderTotal;
+            }
+            return copy;
+          });
         };
 
         const originalFetch = window.fetch.bind(window);
@@ -287,6 +338,7 @@
             data.dailyStandings = adjustStandingsForPenalties(data.dailyStandings);
             data.tournamentStandings = adjustStandingsForPenalties(data.tournamentStandings);
             applyKnownRoundTotals(data);
+            applyKnownTournamentStandings(data);
             data.teamRoundTotals = cleanRoundTotals(data.teamRoundTotals);
 
             const headers = new Headers(response.headers);
