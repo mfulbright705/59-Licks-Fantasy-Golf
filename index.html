@@ -151,8 +151,9 @@
           const score = Number(row?.currentRoundScore ?? row?.CurrentRoundScore ?? row?.roundScore ?? row?.RoundScore ?? row?.today ?? row?.Today);
           return Number.isFinite(score) ? score : 0;
         };
+        const currentRoundScoreRaw = (row) => row?.currentRoundScore ?? row?.CurrentRoundScore ?? row?.roundScore ?? row?.RoundScore ?? row?.today ?? row?.Today ?? row?.dailyScore ?? row?.DailyScore;
         const currentRoundScoreValue = (row) => {
-          const score = Number(row?.currentRoundScore ?? row?.CurrentRoundScore ?? row?.roundScore ?? row?.RoundScore);
+          const score = Number(currentRoundScoreRaw(row));
           return Number.isFinite(score) ? score : 0;
         };
         const setScoreValue = (row, score) => {
@@ -247,6 +248,19 @@
         };
         const cleanStandings = (rows) => Array.isArray(rows) ? rows.map(cleanStanding) : rows;
 
+        const hasCurrentRoundScore = (row) => {
+          if (!row || typeof row !== "object" || isPenaltyRow(row)) return false;
+          return !blank(currentRoundScoreRaw(row)) && !isPreRound(row?.thru ?? row?.Thru);
+        };
+        const releasePreRoundTeamsWithCurrentScores = (rows) => {
+          if (!Array.isArray(rows)) return;
+          rows.forEach((row) => {
+            if (!hasCurrentRoundScore(row)) return;
+            const team = teamName(row);
+            if (team) preRoundTeams.delete(team);
+          });
+        };
+
         const cleanTeamDetails = (rows) => {
           if (!Array.isArray(rows)) return rows;
           const grouped = new Map();
@@ -339,7 +353,7 @@
           grouped.forEach((items, team) => {
             if (preRoundTeams.has(team)) return;
             const candidates = items
-              .filter(({ row }) => isPenaltyRow(row) || !isCutStatus(row?.thru ?? row?.Thru))
+              .filter(({ row }) => isPenaltyRow(row) || (!isCutStatus(row?.thru ?? row?.Thru) && !blank(currentRoundScoreRaw(row))))
               .map(({ row, index }) => {
                 const score = isPenaltyRow(row) ? scoreValue(row) : currentRoundScoreValue(row);
                 return { index, score: Number.isFinite(score) ? score : 0 };
@@ -521,8 +535,9 @@
             penaltyAdjustments.clear();
             data.dailyStandings = cleanStandings(data.dailyStandings);
             data.tournamentStandings = cleanStandings(data.tournamentStandings);
-            data.teamDetails = cleanTeamDetails(data.teamDetails);
             applyKnownCurrentRoundOverrides(data);
+            releasePreRoundTeamsWithCurrentScores(data.teamDetails);
+            data.teamDetails = cleanTeamDetails(data.teamDetails);
             data.teamDetails = recountTeamDetails(data.teamDetails);
             data.dailyStandings = adjustStandingsForPenalties(data.dailyStandings);
             data.tournamentStandings = adjustStandingsForPenalties(data.tournamentStandings);
