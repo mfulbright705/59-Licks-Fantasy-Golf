@@ -524,6 +524,46 @@
           if (leaderTeam) data.leader = leaderTeam;
         };
 
+        // The source sheet can populate provisional R1 totals before R1 is over.
+        // Do not treat those values as a completed round and add the same live scores again.
+        const restoreLiveFirstRoundTournamentStandings = (data) => {
+          const reportedRound = String(data.currentRound ?? "").trim().toUpperCase();
+          const completedRounds = data.currentEventResults?.daily;
+          const hasLiveTeams = Array.isArray(data.dailyStandings) && data.dailyStandings.some((row) =>
+            /\blive\b/i.test(String(row?.thru ?? row?.Thru ?? "")),
+          );
+          const prematureAdvance =
+            reportedRound === "R2" &&
+            Array.isArray(completedRounds) &&
+            completedRounds.length === 1 &&
+            String(completedRounds[0]?.round ?? "").trim().toUpperCase() === "R1" &&
+            hasLiveTeams;
+          if (!prematureAdvance) return;
+
+          const standings = data.dailyStandings
+            .map((row) => {
+              const today = Number(row?.today ?? row?.Today);
+              const copy = { ...row };
+              if (Number.isFinite(today)) {
+                copy.total = TEAM_ROUND_PAR + today;
+                copy.toPar = today;
+                copy.totalToPar = today;
+              }
+              return copy;
+            })
+            .sort((a, b) => Number(a.today ?? a.Today ?? 999999) - Number(b.today ?? b.Today ?? 999999));
+          const leaderScore = Number(standings[0]?.today ?? standings[0]?.Today ?? 0);
+          data.tournamentStandings = standings.map((row, index) => ({
+            ...row,
+            rank: index + 1,
+            gap: Number(row.today ?? row.Today ?? 0) - leaderScore,
+          }));
+          data.currentRound = "R1";
+          data.currentEventResults = { daily: [], tournament: null };
+          data.teamRoundTotals = {};
+          data.leader = teamName(data.tournamentStandings[0]);
+        };
+
         const originalFetch = window.fetch.bind(window);
         window.fetch = async (...args) => {
           const response = await originalFetch(...args);
@@ -552,6 +592,7 @@
             applyKnownRoundTotals(data);
             applyKnownDailyScores(data);
             applyKnownTournamentStandings(data);
+            restoreLiveFirstRoundTournamentStandings(data);
             data.teamRoundTotals = cleanRoundTotals(data.teamRoundTotals);
             const headers = new Headers(response.headers);
             headers.set("content-type", "application/json");
