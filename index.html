@@ -535,6 +535,14 @@
             penaltyAdjustments.clear();
             data.dailyStandings = cleanStandings(data.dailyStandings);
             data.tournamentStandings = cleanStandings(data.tournamentStandings);
+            if (
+              Array.isArray(data.dailyStandings) &&
+              data.dailyStandings.length > 0 &&
+              data.dailyStandings.every((row) => isPreRound(row?.thru ?? row?.Thru))
+            ) {
+              data.liveStatus = "Pre-round";
+              data.leader = "";
+            }
             applyKnownCurrentRoundOverrides(data);
             releasePreRoundTeamsWithCurrentScores(data.teamDetails);
             data.teamDetails = cleanTeamDetails(data.teamDetails);
@@ -561,3 +569,4 @@
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
+
