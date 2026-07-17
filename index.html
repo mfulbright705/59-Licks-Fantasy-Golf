@@ -17,6 +17,17 @@
         const DATA_URL = "https://script.google.com/macros/s/AKfycbxlf3nqcU8R-eeMjFcAZVlJm_3-OcVJ2YcIPPhZ1w2FYyoXzHSEpOrGUcEbtrqIYba_rQ/exec";
         const TEAM_ROUND_PAR = 350;
         const POST_CUT_PENALTY_TO_PAR = 12;
+        // Verified completed Round 1 team totals for the 2026 Open Championship.
+        const OPEN_CHAMPIONSHIP_R1_TOTALS = {
+          Ty: 344,
+          Justin: 341,
+          Dexter: 341,
+          Michael: 343,
+          Booher: 347,
+          Ryan: 346,
+          Andrew: 347,
+          Orians: 349,
+        };
         const KNOWN_US_OPEN_TOTALS = {
           Orians: { R1: 356, R2: 335, R3: 359 },
           Dexter: { R1: 351, R2: 341, R3: 359 },
@@ -564,6 +575,66 @@
           data.leader = teamName(data.tournamentStandings[0]);
         };
 
+
+        // While Round 2 is live, the source currently pre-populates its completed column
+        // and reports R3. Rebuild totals from verified R1 scores plus live R2 scoring.
+        const restoreLiveSecondRoundTournamentStandings = (data) => {
+          const reportedRound = Number(String(data.currentRound ?? "").match(/\d+/)?.[0] ?? 0);
+          const event = String(data.currentEvent ?? "").toLowerCase();
+          const hasLiveTeams = Array.isArray(data.dailyStandings) && data.dailyStandings.some((row) =>
+            /\blive\b/i.test(String(row?.thru ?? row?.Thru ?? "")),
+          );
+          if (
+            !event.includes("open championship") ||
+            reportedRound !== 3 ||
+            !hasLiveTeams ||
+            !Array.isArray(data.currentEventResults?.daily) ||
+            data.currentEventResults.daily.length !== 2
+          ) return;
+
+          const standings = data.dailyStandings
+            .map((row) => {
+              const team = teamName(row);
+              const today = Number(row?.today ?? row?.Today);
+              const completed = OPEN_CHAMPIONSHIP_R1_TOTALS[team];
+              const copy = { ...row };
+              if (Number.isFinite(today) && Number.isFinite(completed)) {
+                copy.total = completed + TEAM_ROUND_PAR + today;
+                copy.toPar = copy.total - TEAM_ROUND_PAR * 2;
+                copy.totalToPar = copy.toPar;
+              }
+              return copy;
+            })
+            .sort((a, b) => Number(a.total ?? a.Total ?? 999999) - Number(b.total ?? b.Total ?? 999999));
+          const leaderTotal = Number(standings[0]?.total ?? standings[0]?.Total ?? 0);
+          data.tournamentStandings = standings.map((row, index) => ({
+            ...row,
+            rank: index + 1,
+            gap: Number(row.total ?? row.Total ?? 0) - leaderTotal,
+          }));
+          data.currentRound = "R2";
+          data.currentEventResults = {
+            daily: data.currentEventResults.daily.filter((row) =>
+              String(row?.round ?? "").trim().toUpperCase() === "R1",
+            ),
+            tournament: data.tournamentStandings[0]
+              ? { winner: teamName(data.tournamentStandings[0]), score: leaderTotal }
+              : null,
+          };
+          data.teamRoundTotals = Object.fromEntries(
+            data.tournamentStandings.map((row) => {
+              const team = teamName(row);
+              const today = Number(row?.today ?? row?.Today);
+              const completed = OPEN_CHAMPIONSHIP_R1_TOTALS[team];
+              return [team, [
+                { team, round: "R1", total: completed, toPar: completed - TEAM_ROUND_PAR, source: "sheet" },
+                { team, round: "R2", total: TEAM_ROUND_PAR + today, toPar: today, source: "live" },
+              ]];
+            }),
+          );
+          data.leader = teamName(data.tournamentStandings[0]);
+        };
+
         const originalFetch = window.fetch.bind(window);
         window.fetch = async (...args) => {
           const response = await originalFetch(...args);
@@ -593,6 +664,7 @@
             applyKnownDailyScores(data);
             applyKnownTournamentStandings(data);
             restoreLiveFirstRoundTournamentStandings(data);
+            restoreLiveSecondRoundTournamentStandings(data);
             data.teamRoundTotals = cleanRoundTotals(data.teamRoundTotals);
             const headers = new Headers(response.headers);
             headers.set("content-type", "application/json");
