@@ -35,7 +35,7 @@
           Andrew: { r1: -4, r2: -11, total: -11 },
           Michael: { r1: -7, r2: -13, total: -15 },
           Ryan: { r1: -4, r2: -20, total: -17 },
-          Ty: { r1: -7, r2: -13, total: -18 },
+          Ty: { r1: -7, r2: -11, total: -16 },
           Booher: { r1: -3, r2: -8, total: -7 },
           Justin: { r1: -13, r2: -10, total: -20 },
           Orians: { r1: -1, r2: -9, total: -7 },
@@ -657,6 +657,24 @@
             );
           if (!event.includes("open championship") || !hasR2Result) return;
 
+          // Bryson received a two-stroke Round 2 penalty after his scorecard review.
+          // Preserve the official adjusted value in Ty's team-detail view as well.
+          if (Array.isArray(data.teamDetails)) {
+            data.teamDetails = data.teamDetails.map((row) => {
+              if (
+                teamName(row) !== "Ty" ||
+                normalizeName(row?.golfer ?? row?.Golfer) !== normalizeName("DeChambeau, Bryson")
+              ) return row;
+              const copy = { ...row };
+              setTodayValue(copy, -2);
+              setScoreValue(copy, -2);
+              setThruValue(copy, "F");
+              setSourceValue(copy, "official");
+              setCountingValue(copy, true);
+              return copy;
+            });
+          }
+
           const rows = Object.entries(OPEN_CHAMPIONSHIP_VERIFIED_R2)
             .map(([team, scores]) => ({
               team,
@@ -690,7 +708,7 @@
               { round: "R1", winner: "Justin, Dexter", score: TEAM_ROUND_PAR - 9 },
               { round: "R2", winner: "Dexter", score: TEAM_ROUND_PAR - 16 },
             ],
-            tournament: { winner: "Ty", score: TEAM_ROUND_PAR * 2 - 18 },
+            tournament: { winner: "Justin", score: TEAM_ROUND_PAR * 2 - 20 },
           };
           data.leader = "Ty";
         };
