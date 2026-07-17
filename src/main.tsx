@@ -485,7 +485,13 @@ function StatCard({ title, value, subtext }: { title: string; value: string | nu
 function RoundBreakdownCard({ standing, roundTotals }: { standing: StandingRow; roundTotals: TeamRoundTotalRow[] }) {
   const completedRows = getCompletedRoundRows(roundTotals);
   const currentRow = roundTotals.find(isCurrentRoundTotal);
-  const completedTotal = getCompletedTotalSummary(roundTotals);
+  const scoredRoundCount = roundTotals.filter((row) => row.total !== null && row.total !== undefined).length;
+  const tournamentTotal = standing.total === null || standing.total === undefined || scoredRoundCount === 0
+    ? null
+    : {
+        total: standing.total,
+        toPar: standing.total - DEFAULT_TEAM_ROUND_PAR * scoredRoundCount,
+      };
 
   return (
     <div style={styles.listCard}>
@@ -509,13 +515,13 @@ function RoundBreakdownCard({ standing, roundTotals }: { standing: StandingRow; 
             </div>
           ))}
 
-          {completedTotal ? (
+          {tournamentTotal ? (
             <div style={styles.roundTotalCellStrong}>
-              <div style={styles.muted}>Total</div>
-              <div style={{ ...styles.roundTotalValue, color: scoreColor(completedTotal.toPar) }}>
-                {completedTotal.total} ({displayScore(completedTotal.toPar)})
+              <div style={styles.muted}>Tournament Total</div>
+              <div style={{ ...styles.roundTotalValue, color: scoreColor(tournamentTotal.toPar) }}>
+                {tournamentTotal.total} ({displayScore(tournamentTotal.toPar)})
               </div>
-              <div style={styles.statSub}>Completed rounds</div>
+              <div style={styles.statSub}>Cumulative player scoring</div>
             </div>
           ) : null}
 
