@@ -28,6 +28,20 @@
           Andrew: 347,
           Orians: 349,
         };
+
+        // Verified against the "Bri'ish Open (To Par)" check sheet. Tournament total
+        // uses each team's five best cumulative player scores, so it is not the sum
+        // of the separately selected daily team totals.
+        const OPEN_CHAMPIONSHIP_VERIFIED_R2 = {
+          Andrew: { r1: -4, r2: -11, total: -12 },
+          Michael: { r1: -7, r2: -11, total: -12 },
+          Ryan: { r1: -4, r2: -19, total: -14 },
+          Ty: { r1: -7, r2: -13, total: -18 },
+          Booher: { r1: -3, r2: -8, total: -7 },
+          Justin: { r1: -13, r2: -7, total: -17 },
+          Orians: { r1: -1, r2: -9, total: -7 },
+          Dexter: { r1: -9, r2: -16, total: -14 },
+        };
         const KNOWN_US_OPEN_TOTALS = {
           Orians: { R1: 356, R2: 335, R3: 359 },
           Dexter: { R1: 351, R2: 341, R3: 359 },
@@ -635,6 +649,53 @@
           data.leader = teamName(data.tournamentStandings[0]);
         };
 
+
+        const applyVerifiedOpenChampionshipR2Standings = (data) => {
+          const event = String(data.currentEvent ?? "").toLowerCase();
+          const hasR2Result = Array.isArray(data.currentEventResults?.daily) &&
+            data.currentEventResults.daily.some((row) =>
+              String(row?.round ?? "").trim().toUpperCase() === "R2",
+            );
+          if (!event.includes("open championship") || !hasR2Result) return;
+
+          const rows = Object.entries(OPEN_CHAMPIONSHIP_VERIFIED_R2)
+            .map(([team, scores]) => ({
+              team,
+              total: TEAM_ROUND_PAR * 2 + scores.total,
+              today: scores.r2,
+              thru: "Final",
+              toPar: scores.total,
+              totalToPar: scores.total,
+              trend: "flat",
+            }))
+            .sort((a, b) => a.total - b.total);
+          const leaderTotal = rows[0]?.total ?? 0;
+          data.dailyStandings = [...rows]
+            .sort((a, b) => a.today - b.today)
+            .map((row, index) => ({ ...row, rank: index + 1, gap: row.today - (rows.reduce((best, item) => Math.min(best, item.today), Infinity)) }));
+          data.tournamentStandings = rows.map((row, index) => ({
+            ...row,
+            rank: index + 1,
+            gap: row.total - leaderTotal,
+          }));
+          data.teamRoundTotals = Object.fromEntries(Object.entries(OPEN_CHAMPIONSHIP_VERIFIED_R2).map(([team, scores]) => [
+            team,
+            [
+              { team, round: "R1", total: TEAM_ROUND_PAR + scores.r1, toPar: scores.r1, source: "sheet" },
+              { team, round: "R2", total: TEAM_ROUND_PAR + scores.r2, toPar: scores.r2, source: "sheet" },
+            ],
+          ]));
+          data.currentRound = "R2";
+          data.currentEventResults = {
+            daily: [
+              { round: "R1", winner: "Justin, Dexter", score: TEAM_ROUND_PAR - 9 },
+              { round: "R2", winner: "Dexter", score: TEAM_ROUND_PAR - 16 },
+            ],
+            tournament: { winner: "Ty", score: TEAM_ROUND_PAR * 2 - 18 },
+          };
+          data.leader = "Ty";
+        };
+
         const originalFetch = window.fetch.bind(window);
         window.fetch = async (...args) => {
           const response = await originalFetch(...args);
@@ -665,6 +726,7 @@
             applyKnownTournamentStandings(data);
             restoreLiveFirstRoundTournamentStandings(data);
             restoreLiveSecondRoundTournamentStandings(data);
+            applyVerifiedOpenChampionshipR2Standings(data);
             data.teamRoundTotals = cleanRoundTotals(data.teamRoundTotals);
             const headers = new Headers(response.headers);
             headers.set("content-type", "application/json");
