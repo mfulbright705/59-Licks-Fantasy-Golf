@@ -724,9 +724,9 @@
             applyKnownRoundTotals(data);
             applyKnownDailyScores(data);
             applyKnownTournamentStandings(data);
+            applyVerifiedOpenChampionshipR2Standings(data);
             restoreLiveFirstRoundTournamentStandings(data);
             restoreLiveSecondRoundTournamentStandings(data);
-            applyVerifiedOpenChampionshipR2Standings(data);
             data.teamRoundTotals = cleanRoundTotals(data.teamRoundTotals);
             const headers = new Headers(response.headers);
             headers.set("content-type", "application/json");
