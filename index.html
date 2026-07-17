@@ -29,16 +29,17 @@
           Orians: 349,
         };
 
-        // Tournament totals are the sum of the team scores recorded for each completed round.
+        // Tournament totals use each team's five best cumulative player scores across completed rounds.
+        // They are intentionally not the sum of the separately selected daily team totals.
         const OPEN_CHAMPIONSHIP_VERIFIED_R2 = {
-          Andrew: { r1: -4, r2: -11, total: -15 },
-          Michael: { r1: -7, r2: -11, total: -18 },
-          Ryan: { r1: -4, r2: -19, total: -23 },
-          Ty: { r1: -7, r2: -13, total: -20 },
-          Booher: { r1: -3, r2: -8, total: -11 },
-          Justin: { r1: -13, r2: -7, total: -20 },
-          Orians: { r1: -1, r2: -9, total: -10 },
-          Dexter: { r1: -9, r2: -16, total: -25 },
+          Andrew: { r1: -4, r2: -11, total: -11 },
+          Michael: { r1: -7, r2: -13, total: -15 },
+          Ryan: { r1: -4, r2: -20, total: -17 },
+          Ty: { r1: -7, r2: -13, total: -18 },
+          Booher: { r1: -3, r2: -8, total: -7 },
+          Justin: { r1: -13, r2: -10, total: -20 },
+          Orians: { r1: -1, r2: -9, total: -7 },
+          Dexter: { r1: -9, r2: -20, total: -17 },
         };
         const KNOWN_US_OPEN_TOTALS = {
           Orians: { R1: 356, R2: 335, R3: 359 },
