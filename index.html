@@ -4,6 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Fantasy Golf Live</title>
+    <script>
+      // Do not restore an old scoring view from a mobile browser's back-forward cache.
+      window.addEventListener("pageshow", (event) => {
+        if (event.persisted) window.location.reload();
+      });
+    </script>
     <style>
       * { box-sizing: border-box; }
       body { margin: 0; }
