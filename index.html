@@ -362,6 +362,76 @@
           }
         };
 
+        // The source feed does not match Ludvig Åberg's accented leaderboard name to
+        // Andrew's roster entry. Use the official Round 3 result while that feed gap exists.
+        const applyVerifiedOpenChampionshipRound3PlayerScores = (data) => {
+          const event = String(data.currentEvent ?? "").toLowerCase();
+          const reportedRound = Number(String(data.currentRound ?? "").match(/\d+/)?.[0] ?? 0);
+          const completedRounds = data.currentEventResults?.daily;
+          if (
+            !event.includes("open championship") ||
+            reportedRound !== 4 ||
+            !Array.isArray(completedRounds) ||
+            completedRounds.length !== 3 ||
+            !Array.isArray(data.teamDetails)
+          ) return;
+
+          data.teamDetails = data.teamDetails.map((row) => {
+            if (
+              teamName(row) !== "Andrew" ||
+              !["abergludvig", "ludvigaberg"].includes(normalizeName(row?.golfer ?? row?.Golfer))
+            ) return row;
+            const copy = { ...row };
+            setTodayValue(copy, -4);
+            setScoreValue(copy, -4);
+            setThruValue(copy, "F");
+            setSourceValue(copy, "official");
+            return copy;
+          });
+        };
+
+        // Keep the daily standings synchronized with the counted player rows after
+        // any official player-level correction is applied.
+        const refreshOpenChampionshipLiveDailyScores = (data) => {
+          const event = String(data.currentEvent ?? "").toLowerCase();
+          const reportedRound = Number(String(data.currentRound ?? "").match(/\d+/)?.[0] ?? 0);
+          const completedRounds = data.currentEventResults?.daily;
+          if (
+            !event.includes("open championship") ||
+            reportedRound !== 4 ||
+            !Array.isArray(completedRounds) ||
+            completedRounds.length !== 3 ||
+            !Array.isArray(data.teamDetails) ||
+            !Array.isArray(data.dailyStandings)
+          ) return;
+
+          const scores = new Map();
+          data.teamDetails.forEach((row) => {
+            if (!isCounting(row)) return;
+            const team = teamName(row);
+            if (!team) return;
+            scores.set(team, (scores.get(team) ?? 0) + currentRoundScoreValue(row));
+          });
+          const rows = data.dailyStandings
+            .map((row) => {
+              const score = scores.get(teamName(row));
+              return Number.isFinite(score) ? { ...row, today: score } : row;
+            })
+            .sort((a, b) => Number(a.today ?? a.Today ?? 999999) - Number(b.today ?? b.Today ?? 999999));
+          const leaderScore = Number(rows[0]?.today ?? rows[0]?.Today ?? 0);
+          data.dailyStandings = rows.map((row, index) => ({
+            ...row,
+            rank: index + 1,
+            gap: Number(row.today ?? row.Today ?? 0) - leaderScore,
+          }));
+          if (Array.isArray(data.tournamentStandings)) {
+            data.tournamentStandings = data.tournamentStandings.map((row) => {
+              const score = scores.get(teamName(row));
+              return Number.isFinite(score) ? { ...row, today: score } : row;
+            });
+          }
+        };
+
         const recountTeamDetails = (rows) => {
           if (!Array.isArray(rows)) return rows;
           const grouped = new Map();
@@ -786,9 +856,11 @@
               data.leader = "";
             }
             applyKnownCurrentRoundOverrides(data);
+            applyVerifiedOpenChampionshipRound3PlayerScores(data);
             releasePreRoundTeamsWithCurrentScores(data.teamDetails);
             data.teamDetails = cleanTeamDetails(data.teamDetails);
             data.teamDetails = recountTeamDetails(data.teamDetails);
+            refreshOpenChampionshipLiveDailyScores(data);
             data.dailyStandings = adjustStandingsForPenalties(data.dailyStandings);
             data.tournamentStandings = adjustStandingsForPenalties(data.tournamentStandings);
             applyKnownRoundTotals(data);
