@@ -649,13 +649,66 @@
         };
 
 
+        // The source advances its round label and results table before the live round is complete.
+        // Preserve the official R1/R2 figures and expose its live Round 3 scoring as Round 3.
+        const restoreLiveThirdRoundState = (data) => {
+          const event = String(data.currentEvent ?? "").toLowerCase();
+          const reportedRound = Number(String(data.currentRound ?? "").match(/\d+/)?.[0] ?? 0);
+          const completedRounds = data.currentEventResults?.daily;
+          const hasLiveTeams = Array.isArray(data.dailyStandings) && data.dailyStandings.some((row) =>
+            /\blive\b/i.test(String(row?.thru ?? row?.Thru ?? "")),
+          );
+          if (
+            !event.includes("open championship") ||
+            reportedRound !== 4 ||
+            !hasLiveTeams ||
+            !Array.isArray(completedRounds) ||
+            completedRounds.length !== 3
+          ) return;
+
+          data.currentRound = "R3";
+          data.currentEventResults = {
+            daily: completedRounds.filter((row) =>
+              ["R1", "R2"].includes(String(row?.round ?? "").trim().toUpperCase()),
+            ),
+            tournament: data.currentEventResults?.tournament ?? null,
+          };
+          data.teamRoundTotals = Object.fromEntries(
+            (Array.isArray(data.dailyStandings) ? data.dailyStandings : []).map((row) => {
+              const team = teamName(row);
+              const verified = OPEN_CHAMPIONSHIP_VERIFIED_R2[team];
+              const today = Number(row?.today ?? row?.Today);
+              const rounds = verified
+                ? [
+                    { team, round: "R1", total: TEAM_ROUND_PAR + verified.r1, toPar: verified.r1, source: "sheet" },
+                    { team, round: "R2", total: TEAM_ROUND_PAR + verified.r2, toPar: verified.r2, source: "sheet" },
+                  ]
+                : [];
+              if (Number.isFinite(today)) {
+                rounds.push({ team, round: "R3", total: TEAM_ROUND_PAR + today, toPar: today, source: "live" });
+              }
+              return [team, rounds];
+            }),
+          );
+          const leaderTeam = teamName(data.tournamentStandings?.[0]);
+          if (leaderTeam) data.leader = leaderTeam;
+        };
+
         const applyVerifiedOpenChampionshipR2Standings = (data) => {
           const event = String(data.currentEvent ?? "").toLowerCase();
-          const hasR2Result = Array.isArray(data.currentEventResults?.daily) &&
-            data.currentEventResults.daily.some((row) =>
+          const completedRounds = data.currentEventResults?.daily;
+          const hasR2Result = Array.isArray(completedRounds) &&
+            completedRounds.some((row) =>
               String(row?.round ?? "").trim().toUpperCase() === "R2",
             );
-          if (!event.includes("open championship") || !hasR2Result) return;
+          // These fixed values are only for the completed two-round state.
+          // Once Round 3 is underway, preserve the live feed instead.
+          if (
+            !event.includes("open championship") ||
+            !hasR2Result ||
+            !Array.isArray(completedRounds) ||
+            completedRounds.length !== 2
+          ) return;
 
           // Bryson received a two-stroke Round 2 penalty after his scorecard review.
           // Preserve the official adjusted value in Ty's team-detail view as well.
@@ -744,6 +797,7 @@
             applyVerifiedOpenChampionshipR2Standings(data);
             restoreLiveFirstRoundTournamentStandings(data);
             restoreLiveSecondRoundTournamentStandings(data);
+            restoreLiveThirdRoundState(data);
             data.teamRoundTotals = cleanRoundTotals(data.teamRoundTotals);
             const headers = new Headers(response.headers);
             headers.set("content-type", "application/json");
